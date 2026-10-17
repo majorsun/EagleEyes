@@ -13,7 +13,8 @@
     "@colyseus/schema": "^5.0.0",
     "@colyseus/ws-transport": "^0.18.4",
     "@eagleeyes/shared": "*",
-    "colyseus": "^0.18.0"
+    "colyseus": "^0.18.0",
+    "sirv": "^3.0.2"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",

@@ -1,9 +1,12 @@
 import { Client, getStateCallbacks } from "@colyseus/sdk";
 import { EagleEyesRoomState } from "@eagleeyes/shared";
 
-// Derived from the page's own hostname rather than hardcoded "localhost" so a client loaded over
-// the LAN (e.g. http://192.168.x.x:5173) connects back to that same machine's server, not its own.
-const SERVER_URL = `ws://${window.location.hostname}:2567`;
+// In dev, Vite (5173) and the Colyseus server (2567) run on different ports, so derive the
+// hostname but keep the server's port explicit. In production they're served from the same
+// origin (the server serves the built client too), so just reuse the page's own origin/protocol.
+const SERVER_URL = import.meta.env.DEV
+  ? `ws://${window.location.hostname}:2567`
+  : `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
 
 export async function connectToRoom() {
   const client = new Client(SERVER_URL);
