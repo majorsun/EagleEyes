@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.3.0] - 2026-10-12
+
+### Changed
+- Refactored from a single client-side app into a client-server architecture: an authoritative Colyseus server (`/server`) now owns all world state, player state, and enemy AI, while the browser client (`/client`) renders and sends input. Movement physics, terrain generation, and enemy AI logic moved into a shared, Babylon-free package (`/shared`) used by both sides.
+- Real multiplayer: any number of players can connect to the same room and see each other move, fight, and die in real time, with client-side prediction and server reconciliation for responsive local movement.
+- Enemy AI, damage, death, and respawn for both players and enemies are now fully server-authoritative; the client is purely reactive (visuals, HUD, cosmetic bullet tracers).
+
 ## [0.2.0] - 2026-10-02
 
 ### Added

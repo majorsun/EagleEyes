@@ -1,0 +1,22 @@
+{
+  "name": "@eagleeyes/server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -b",
+    "start": "node build/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@colyseus/schema": "^5.0.0",
+    "@colyseus/ws-transport": "^0.18.4",
+    "@eagleeyes/shared": "*",
+    "colyseus": "^0.18.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.3"
+  }
+}
