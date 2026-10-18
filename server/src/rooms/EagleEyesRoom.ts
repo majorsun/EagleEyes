@@ -108,6 +108,12 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
     this.onMessage(ClientMessage.Fire, (client, message: FirePayload) => {
       this.handleFire(client.sessionId, message);
     });
+    this.onMessage(ClientMessage.Reload, (client) => {
+      const player = this.state.players.get(client.sessionId);
+      const sniper = this.snipers.get(client.sessionId);
+      if (!player || !sniper || player.isDead) return;
+      sniper.startReload(Date.now());
+    });
 
     this.setFixedTimestep((ctx) => this.fixedTick(ctx.dt), 60);
   }
@@ -173,6 +179,14 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
       if (player.health < PLAYER_MAX_HEALTH) {
         player.health = Math.min(PLAYER_MAX_HEALTH, player.health + PLAYER_REGEN_PER_SECOND * dt);
       }
+
+      // Resolves a completed reload even if the player hasn't fired/reloaded again since, so the
+      // ammo count other clients see (and this player's own HUD) doesn't lag behind reality.
+      const sniper = this.snipers.get(sessionId);
+      if (sniper) {
+        sniper.tick(now);
+        player.ammo = sniper.currentAmmo;
+      }
     }
 
     // Players past the moat are in the PvP zone -- enemies can't see or attack them there.
@@ -219,10 +233,16 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
     });
   }
 
+  private isInvincible(sessionId: string, now: number): boolean {
+    const invincibleUntil = this.playerInvincibleUntil.get(sessionId);
+    return invincibleUntil !== undefined && now < invincibleUntil;
+  }
+
   private handleFire(sessionId: string, payload: FirePayload): void {
     const player = this.state.players.get(sessionId);
     const sniper = this.snipers.get(sessionId);
     if (!player || !sniper || player.isDead) return;
+    if (this.isInvincible(sessionId, Date.now())) return;
 
     const originDx = payload.originX - player.x;
     const originDy = payload.originY - player.y;
@@ -307,8 +327,7 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
     const player = this.state.players.get(sessionId);
     if (!player || player.isDead) return;
 
-    const invincibleUntil = this.playerInvincibleUntil.get(sessionId);
-    if (invincibleUntil !== undefined && now < invincibleUntil) return;
+    if (this.isInvincible(sessionId, now)) return;
 
     player.health = Math.max(0, player.health - amount);
     if (player.health <= 0) {

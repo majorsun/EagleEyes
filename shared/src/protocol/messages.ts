@@ -5,6 +5,7 @@ export const ClientMessage = {
   ToggleProne: "toggleProne",
   Teleport: "teleport",
   Fire: "fire",
+  Reload: "reload",
 } as const;
 
 export interface InputPayload {

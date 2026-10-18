@@ -1,9 +1,15 @@
-import { Scene, Mesh, TransformNode, MeshBuilder, StandardMaterial, Color3, Vector3 } from "@babylonjs/core";
+import { Scene, Mesh, TransformNode, MeshBuilder, StandardMaterial, DynamicTexture, Color3, Vector3 } from "@babylonjs/core";
 import { spawnDebris } from "./debris";
 
-const INTACT_COLOR = new Color3(0.8, 0.1, 0.1);
+// Distinct per-enemy body colors so overlapping/distant silhouettes don't blend into one blob.
+const BODY_COLORS = [new Color3(0.8, 0.1, 0.1), new Color3(0.85, 0.5, 0.05), new Color3(0.6, 0.15, 0.8)];
 const DEBRIS_COLOR = new Color3(0.25, 0.22, 0.2);
 const LERP_RATE = 12;
+
+const MARKER_Y_OFFSET = 1.3;
+/** Scales the marker plane by (distance to camera * this) each frame so its on-screen size stays
+ * roughly constant instead of shrinking into an unreadable speck at range. */
+const MARKER_DISTANCE_SCALE = 0.045;
 
 /**
  * Purely reactive visual for a server-driven enemy: no AI, no health authority, just renders
@@ -11,10 +17,12 @@ const LERP_RATE = 12;
  */
 export class EnemyView {
   readonly mesh: Mesh;
+  private readonly intactColor: Color3;
   private readonly bodyMat: StandardMaterial;
   private readonly debrisMat: StandardMaterial;
   private readonly knife: TransformNode;
   private readonly knifeRestRotation: Vector3;
+  private readonly marker: Mesh;
   private flashResetTimer: ReturnType<typeof setTimeout> | null = null;
   private stabResetTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -29,9 +37,13 @@ export class EnemyView {
     y: number,
     z: number,
     rotY: number,
+    label: string,
+    colorIndex: number,
   ) {
+    this.intactColor = BODY_COLORS[colorIndex % BODY_COLORS.length];
+
     this.bodyMat = new StandardMaterial("enemyBodyMat", scene);
-    this.bodyMat.diffuseColor = INTACT_COLOR.clone();
+    this.bodyMat.diffuseColor = this.intactColor.clone();
 
     this.debrisMat = new StandardMaterial("enemyDebrisMat", scene);
     this.debrisMat.diffuseColor = DEBRIS_COLOR.clone();
@@ -44,10 +56,38 @@ export class EnemyView {
     this.knife = this.createKnife();
     this.knifeRestRotation = this.knife.rotation.clone();
 
+    this.marker = this.createMarker(label);
+    this.marker.position = new Vector3(x, y + MARKER_Y_OFFSET, z);
+
     this.targetX = x;
     this.targetY = y;
     this.targetZ = z;
     this.targetRotY = rotY;
+  }
+
+  /**
+   * A billboarded, distance-scaled number tag above the enemy's head. Unlike the body mesh (which
+   * can read as a thin sliver edge-on, or blend into neighbors at range), this always faces the
+   * camera and keeps a roughly constant on-screen size, so enemy count stays readable from any
+   * distance or angle.
+   */
+  private createMarker(label: string): Mesh {
+    const texture = new DynamicTexture(`enemyMarkerTex-${label}`, { width: 128, height: 128 }, this.scene, true);
+    texture.hasAlpha = true;
+    texture.drawText(label, null, null, "bold 88px sans-serif", "#ffffff", "transparent", true);
+
+    const material = new StandardMaterial("enemyMarkerMat", this.scene);
+    material.diffuseTexture = texture;
+    material.emissiveColor = Color3.White();
+    material.diffuseColor = Color3.Black();
+    material.specularColor = Color3.Black();
+    material.backFaceCulling = false;
+
+    const marker = MeshBuilder.CreatePlane("enemyMarker", { size: 1 }, this.scene);
+    marker.material = material;
+    marker.billboardMode = Mesh.BILLBOARDMODE_ALL;
+    marker.isPickable = false;
+    return marker;
   }
 
   private createKnife(): TransformNode {
@@ -103,13 +143,24 @@ export class EnemyView {
     this.mesh.position.y += (this.targetY - this.mesh.position.y) * t;
     this.mesh.position.z += (this.targetZ - this.mesh.position.z) * t;
     this.mesh.rotation.y += (this.targetRotY - this.mesh.rotation.y) * t;
+
+    this.marker.position.x = this.mesh.position.x;
+    this.marker.position.y = this.mesh.position.y + MARKER_Y_OFFSET;
+    this.marker.position.z = this.mesh.position.z;
+
+    const camera = this.scene.activeCamera;
+    if (camera) {
+      const distance = Vector3.Distance(camera.globalPosition, this.marker.position);
+      const scale = distance * MARKER_DISTANCE_SCALE;
+      this.marker.scaling.set(scale, scale, scale);
+    }
   }
 
   flashHit(): void {
     this.bodyMat.diffuseColor = Color3.White();
     if (this.flashResetTimer) clearTimeout(this.flashResetTimer);
     this.flashResetTimer = setTimeout(() => {
-      this.bodyMat.diffuseColor = INTACT_COLOR.clone();
+      this.bodyMat.diffuseColor = this.intactColor.clone();
     }, 80);
   }
 
@@ -123,12 +174,15 @@ export class EnemyView {
 
   break(x: number, y: number, z: number): void {
     this.mesh.setEnabled(false);
+    this.marker.setEnabled(false);
     spawnDebris(this.scene, new Vector3(x, y, z), this.debrisMat, "enemyDebris");
   }
 
   respawn(x: number, y: number, z: number): void {
-    this.bodyMat.diffuseColor = INTACT_COLOR.clone();
+    this.bodyMat.diffuseColor = this.intactColor.clone();
     this.mesh.position.set(x, y, z);
+    this.marker.position.set(x, y + MARKER_Y_OFFSET, z);
+    this.marker.setEnabled(true);
     this.setTarget(x, y, z, 0);
     this.mesh.setEnabled(true);
   }
@@ -136,6 +190,8 @@ export class EnemyView {
   dispose(): void {
     if (this.flashResetTimer) clearTimeout(this.flashResetTimer);
     if (this.stabResetTimer) clearTimeout(this.stabResetTimer);
+    this.marker.material?.dispose(false, true);
+    this.marker.dispose();
     this.mesh.dispose();
   }
 }

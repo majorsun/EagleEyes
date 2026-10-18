@@ -54,6 +54,8 @@ const pvpZoneIndicator = document.getElementById("pvpZoneIndicator") as HTMLDivE
 const invincibilityShield = document.getElementById("invincibilityShield") as HTMLDivElement;
 const invincibilityRing = document.getElementById("invincibilityRing") as HTMLDivElement;
 const invincibilityTimer = document.getElementById("invincibilityTimer") as HTMLSpanElement;
+const radarCanvas = document.getElementById("radarCanvas") as HTMLCanvasElement;
+const radarCtx = radarCanvas.getContext("2d")!;
 const engine = new Engine(canvas, true);
 
 /** Circular steel spawn platform with a glowing blue rim. */
@@ -302,7 +304,10 @@ stateCallbacks(room.state).players.onRemove((_player, sessionId) => {
 });
 
 stateCallbacks(room.state).enemies.onAdd((enemy, enemyId) => {
-  const view = new EnemyView(scene, enemy.x, enemy.y, enemy.z, enemy.rotY);
+  // enemyId is server-assigned as "enemy-0", "enemy-1", ... -- use that index for a stable,
+  // human-readable "1"/"2"/"3" marker label and a matching distinct body color.
+  const index = Number(enemyId.split("-").pop()) || 0;
+  const view = new EnemyView(scene, enemy.x, enemy.y, enemy.z, enemy.rotY, `${index + 1}`, index);
   enemyViews.set(enemyId, view);
   stateCallbacks(enemy).listen("health", (value, previous) => {
     if (value < previous) view.flashHit();
@@ -429,6 +434,20 @@ const sniper = createDefaultSniper();
 const { root: weaponRoot, muzzle } = createSniperViewModel(scene, camera);
 const bulletTracer = new BulletTracer(scene);
 
+const weaponRestPosition = weaponRoot.position.clone();
+const weaponRestRotationX = weaponRoot.rotation.x;
+const RECOIL_KICK_DISTANCE = 0.08;
+const RECOIL_KICK_ANGLE = 0.14;
+const RECOIL_RECOVERY_RATE = 9;
+let recoilKick = 0;
+
+/** Kicks the view model back and tips the muzzle up on fire, then eases back to rest each frame. */
+function applyRecoil(deltaSeconds: number): void {
+  recoilKick = Math.max(0, recoilKick - deltaSeconds * RECOIL_RECOVERY_RATE);
+  weaponRoot.position.z = weaponRestPosition.z - recoilKick * RECOIL_KICK_DISTANCE;
+  weaponRoot.rotation.x = weaponRestRotationX - recoilKick * RECOIL_KICK_ANGLE;
+}
+
 room.onMessage(ServerEvent.BulletFired, (payload: BulletFiredEvent) => {
   bulletTracer.spawn(
     new Vector3(payload.originX, payload.originY, payload.originZ),
@@ -454,7 +473,9 @@ const AIM_CONVERGENCE_DISTANCE = 1000;
  * broadcasts BulletFired (to everyone, including the shooter) -- so no local tracer spawns here.
  */
 function fire(): void {
-  if (isLocalPlayerDead() || !sniper.fire(performance.now())) return;
+  const now = performance.now();
+  if (isLocalPlayerDead() || now < invincibleUntil || !sniper.fire(now)) return;
+  recoilKick = 1;
   const origin = muzzle.getAbsolutePosition();
   const aimRay = camera.getForwardRay(AIM_CONVERGENCE_DISTANCE);
   const aimPoint = aimRay.origin.add(aimRay.direction.scale(AIM_CONVERGENCE_DISTANCE));
@@ -468,6 +489,13 @@ function fire(): void {
     dirZ: direction.z,
   });
 }
+
+window.addEventListener("keydown", (e) => {
+  if (e.code !== "KeyR" || isLocalPlayerDead()) return;
+  if (sniper.startReload(performance.now())) {
+    room.send(ClientMessage.Reload);
+  }
+});
 
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
@@ -513,7 +541,16 @@ function updateHud(): void {
   const pct = (localPlayer.health / PLAYER_MAX_HEALTH) * 100;
   healthBarFill.style.width = `${pct}%`;
   healthText.textContent = `${Math.ceil(localPlayer.health)} / ${PLAYER_MAX_HEALTH}`;
-  ammoCounter.textContent = `${localPlayer.ammo} / ${sniper.magazineSize}`;
+
+  sniper.tick(performance.now());
+  if (sniper.isReloading) {
+    ammoCounter.textContent = `Reloading... ${(sniper.reloadRemainingMs(performance.now()) / 1000).toFixed(1)}s`;
+    ammoCounter.classList.add("reloading");
+  } else {
+    ammoCounter.textContent = `${localPlayer.ammo} / ${sniper.magazineSize}`;
+    ammoCounter.classList.remove("reloading");
+  }
+
   pvpZoneIndicator.classList.toggle("visible", isInPvpZone(localPlayer.z));
 
   const invincibleRemainingMs = Math.max(0, invincibleUntil - performance.now());
@@ -526,12 +563,91 @@ function updateHud(): void {
   }
 }
 
+const RADAR_RANGE = 60;
+const RADAR_RADIUS_PX = radarCanvas.width / 2;
+const RADAR_BLIP_RADIUS_PX = 5;
+// Keep in sync with EnemyView's BODY_COLORS palette so a given enemy reads the same color here.
+const RADAR_ENEMY_COLORS = ["#cc1a1a", "#d9800d", "#9926cc"];
+// Keep in sync with RemotePlayerView's capsule material color.
+const RADAR_PLAYER_COLOR = "#3380d9";
+
+/**
+ * Egocentric radar: player is always the centered, forward-facing marker, and enemy blips are
+ * rotated into player-relative space (so "up" on the radar always means "in front of you"), with
+ * out-of-range enemies clamped to the rim instead of hidden, so direction stays visible at any
+ * distance.
+ */
+function updateRadar(): void {
+  radarCtx.clearRect(0, 0, radarCanvas.width, radarCanvas.height);
+
+  const localPlayer = room.state.players.get(localSessionId);
+  if (!localPlayer || localPlayer.isDead) return;
+
+  const cx = radarCanvas.width / 2;
+  const cy = radarCanvas.height / 2;
+  const yaw = camera.rotation.y;
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  const pxPerUnit = (RADAR_RADIUS_PX - RADAR_BLIP_RADIUS_PX) / RADAR_RANGE;
+
+  radarCtx.strokeStyle = "rgba(255, 255, 255, 0.15)";
+  radarCtx.lineWidth = 1;
+  radarCtx.beginPath();
+  radarCtx.arc(cx, cy, RADAR_RADIUS_PX * 0.5, 0, Math.PI * 2);
+  radarCtx.stroke();
+
+  radarCtx.fillStyle = "#ffffff";
+  radarCtx.beginPath();
+  radarCtx.moveTo(cx, cy - 7);
+  radarCtx.lineTo(cx - 5, cy + 5);
+  radarCtx.lineTo(cx + 5, cy + 5);
+  radarCtx.closePath();
+  radarCtx.fill();
+
+  // Maps a world position to radar pixel coords, rotated into player-relative space and clamped
+  // to the rim so off-range blips still show direction instead of disappearing.
+  const toRadarPx = (worldX: number, worldZ: number): { x: number; y: number } => {
+    const dx = worldX - localPlayer.x;
+    const dz = worldZ - localPlayer.z;
+    const right = dx * cos - dz * sin;
+    const forward = dx * sin + dz * cos;
+    const dist = Math.sqrt(right * right + forward * forward);
+    const clampScale = dist > RADAR_RANGE ? RADAR_RANGE / dist : 1;
+    return { x: cx + right * clampScale * pxPerUnit, y: cy - forward * clampScale * pxPerUnit };
+  };
+
+  for (const [sessionId] of remotePlayers) {
+    const player = room.state.players.get(sessionId);
+    if (!player || player.isDead) continue;
+
+    const { x, y } = toRadarPx(player.x, player.z);
+    radarCtx.fillStyle = RADAR_PLAYER_COLOR;
+    radarCtx.beginPath();
+    radarCtx.arc(x, y, RADAR_BLIP_RADIUS_PX, 0, Math.PI * 2);
+    radarCtx.fill();
+  }
+
+  for (const [enemyId] of enemyViews) {
+    const enemy = room.state.enemies.get(enemyId);
+    if (!enemy || enemy.broken) continue;
+
+    const { x, y } = toRadarPx(enemy.x, enemy.z);
+    const index = Number(enemyId.split("-").pop()) || 0;
+    radarCtx.fillStyle = RADAR_ENEMY_COLORS[index % RADAR_ENEMY_COLORS.length];
+    radarCtx.beginPath();
+    radarCtx.arc(x, y, RADAR_BLIP_RADIUS_PX, 0, Math.PI * 2);
+    radarCtx.fill();
+  }
+}
+
 engine.runRenderLoop(() => {
   const deltaSeconds = engine.getDeltaTime() / 1000;
   updateNetworkedMovement(deltaSeconds);
   updateRemotePlayers(deltaSeconds);
   updateEnemies(deltaSeconds);
   updateHud();
+  updateRadar();
+  applyRecoil(deltaSeconds);
   bulletTracer.update(deltaSeconds);
   scene.render();
 });
