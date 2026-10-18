@@ -30,6 +30,7 @@ import {
   SPAWN_PLATFORM_POSITION,
   TELEPORT_PLATFORM_POSITION,
   PLAYER_RESPAWN_DELAY_MS,
+  RESPAWN_INVINCIBILITY_MS,
   PLAYER_MAX_HEALTH,
   MOAT_WIDTH,
   isInPvpZone,
@@ -50,6 +51,9 @@ const deathOverlay = document.getElementById("deathOverlay") as HTMLDivElement;
 const deathSubtitle = document.getElementById("deathSubtitle") as HTMLDivElement;
 const ammoCounter = document.getElementById("ammoCounter") as HTMLDivElement;
 const pvpZoneIndicator = document.getElementById("pvpZoneIndicator") as HTMLDivElement;
+const invincibilityShield = document.getElementById("invincibilityShield") as HTMLDivElement;
+const invincibilityRing = document.getElementById("invincibilityRing") as HTMLDivElement;
+const invincibilityTimer = document.getElementById("invincibilityTimer") as HTMLSpanElement;
 const engine = new Engine(canvas, true);
 
 /** Circular steel spawn platform with a glowing blue rim. */
@@ -349,6 +353,7 @@ function isLocalPlayerDead(): boolean {
 const INPUT_SEND_INTERVAL = 1 / 30;
 let inputSendAccumulator = 0;
 let wasDeadLastFrame = false;
+let invincibleUntil = 0;
 
 function updateNetworkedMovement(deltaSeconds: number): void {
   const localPlayer = room.state.players.get(localSessionId);
@@ -362,6 +367,8 @@ function updateNetworkedMovement(deltaSeconds: number): void {
     // Just respawned server-side: drop stale prediction entirely rather than reconcile against it.
     reconciler.reset(createSpawnPhysicsState());
     wasDeadLastFrame = false;
+    // Mirrors the server granting RESPAWN_INVINCIBILITY_MS of damage immunity on respawn.
+    invincibleUntil = performance.now() + RESPAWN_INVINCIBILITY_MS;
   } else {
     reconciler.reconcile({ x: localPlayer.x, y: localPlayer.y, z: localPlayer.z }, localPlayer.lastProcessedSeq);
   }
@@ -508,6 +515,15 @@ function updateHud(): void {
   healthText.textContent = `${Math.ceil(localPlayer.health)} / ${PLAYER_MAX_HEALTH}`;
   ammoCounter.textContent = `${localPlayer.ammo} / ${sniper.magazineSize}`;
   pvpZoneIndicator.classList.toggle("visible", isInPvpZone(localPlayer.z));
+
+  const invincibleRemainingMs = Math.max(0, invincibleUntil - performance.now());
+  if (invincibleRemainingMs > 0) {
+    invincibilityShield.classList.add("visible");
+    invincibilityRing.style.transform = `scale(${invincibleRemainingMs / RESPAWN_INVINCIBILITY_MS})`;
+    invincibilityTimer.textContent = `${(invincibleRemainingMs / 1000).toFixed(1)}s`;
+  } else {
+    invincibilityShield.classList.remove("visible");
+  }
 }
 
 engine.runRenderLoop(() => {

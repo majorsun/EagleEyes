@@ -1,3 +1,5 @@
+import { MIN_ENEMY_SEPARATION } from "../movement/constants";
+
 export interface SpawnArea {
   minX: number;
   maxX: number;
@@ -32,6 +34,8 @@ export interface LivingPlayer {
   sessionId: string;
   x: number;
   z: number;
+  /** Airborne players (mid-jump) can't be melee-attacked, even if an enemy is chasing them. */
+  isJumping: boolean;
 }
 
 export type EnemyAIEvent =
@@ -116,6 +120,10 @@ export function stepEnemyAI(
     };
   }
 
+  // In range but jumping: let the enemy keep waiting (don't consume the cooldown) so it can land
+  // the hit the instant the player touches back down, instead of resetting the timer for nothing.
+  if (nearest.isJumping) return { state, events: [] };
+
   if (now - state.lastAttackTime >= config.attackIntervalMs) {
     return {
       state: { ...state, lastAttackTime: now },
@@ -136,4 +144,47 @@ export function applyDamageToEnemy(state: EnemyAIState, config: EnemyAIConfig, a
     };
   }
   return { state: { ...state, health }, events: [] };
+}
+
+/**
+ * Pushes intact enemies apart in the XZ plane so no two ever sit closer than MIN_ENEMY_SEPARATION
+ * (e.g. several converging on the same player). Several relaxation passes let a push away from
+ * one neighbor settle against the others instead of re-violating them; cheap for the enemy counts
+ * this game uses.
+ */
+export function separateEnemies(states: EnemyAIState[], rng: () => number): EnemyAIState[] {
+  const next = states.map((state) => ({ ...state }));
+
+  for (let pass = 0; pass < 4; pass++) {
+    for (let i = 0; i < next.length; i++) {
+      if (next[i].broken) continue;
+      for (let j = i + 1; j < next.length; j++) {
+        if (next[j].broken) continue;
+
+        const dx = next[j].x - next[i].x;
+        const dz = next[j].z - next[i].z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist >= MIN_ENEMY_SEPARATION) continue;
+
+        let dirX: number;
+        let dirZ: number;
+        if (dist < 1e-6) {
+          const angle = rng() * Math.PI * 2;
+          dirX = Math.cos(angle);
+          dirZ = Math.sin(angle);
+        } else {
+          dirX = dx / dist;
+          dirZ = dz / dist;
+        }
+
+        const pushEach = (MIN_ENEMY_SEPARATION - dist) / 2;
+        next[i].x -= dirX * pushEach;
+        next[i].z -= dirZ * pushEach;
+        next[j].x += dirX * pushEach;
+        next[j].z += dirZ * pushEach;
+      }
+    }
+  }
+
+  return next;
 }

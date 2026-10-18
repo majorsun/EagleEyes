@@ -18,6 +18,7 @@ import {
   type TerrainData,
   createEnemyAIState,
   stepEnemyAI,
+  separateEnemies,
   applyDamageToEnemy,
   type EnemyAIState,
   type EnemyAIConfig,
@@ -31,12 +32,16 @@ import {
   SPAWN_POSITION,
   PLAYER_MAX_HEALTH,
   PLAYER_RESPAWN_DELAY_MS,
+  RESPAWN_INVINCIBILITY_MS,
+  PLAYER_REGEN_PER_SECOND,
   ENEMY_COUNT,
   MAX_BULLET_RANGE,
   FIRE_ORIGIN_TOLERANCE,
   PLAYER_HIT_RADIUS,
-  PLAYER_HIT_CENTER_DROP,
-  ENEMY_HIT_RADIUS,
+  PLAYER_HIT_HALF_HEIGHT,
+  ENEMY_HIT_HALF_WIDTH,
+  ENEMY_HIT_HALF_HEIGHT,
+  ENEMY_HIT_HALF_DEPTH,
 } from "@eagleeyes/shared";
 
 const DEFAULT_ENEMY_CONFIG: EnemyAIConfig = {
@@ -61,6 +66,7 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
   private readonly latestInputs = new Map<string, InputPayload>();
   private readonly physics = new Map<string, PlayerPhysicsState>();
   private readonly playerRespawnAt = new Map<string, number>();
+  private readonly playerInvincibleUntil = new Map<string, number>();
   private readonly enemies = new Map<string, EnemyAIState>();
   private readonly snipers = new Map<string, Sniper>();
 
@@ -126,6 +132,7 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
     this.latestInputs.delete(client.sessionId);
     this.physics.delete(client.sessionId);
     this.playerRespawnAt.delete(client.sessionId);
+    this.playerInvincibleUntil.delete(client.sessionId);
     this.snipers.delete(client.sessionId);
     console.log(`${client.sessionId} left (${this.state.players.size} players)`);
   }
@@ -144,7 +151,7 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
       if (player.isDead) {
         const respawnAt = this.playerRespawnAt.get(sessionId);
         if (respawnAt !== undefined && now >= respawnAt) {
-          this.respawnPlayer(sessionId, player);
+          this.respawnPlayer(sessionId, player, now);
         }
         continue;
       }
@@ -162,25 +169,41 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
       player.rotY = input.yaw;
       player.isProne = next.isProne;
       player.lastProcessedSeq = input.seq;
+
+      if (player.health < PLAYER_MAX_HEALTH) {
+        player.health = Math.min(PLAYER_MAX_HEALTH, player.health + PLAYER_REGEN_PER_SECOND * dt);
+      }
     }
 
     // Players past the moat are in the PvP zone -- enemies can't see or attack them there.
     const livingPlayers = [...this.state.players.entries()]
       .filter(([, p]) => !p.isDead && !isInPvpZone(p.z))
-      .map(([sessionId, p]) => ({ sessionId, x: p.x, z: p.z }));
+      .map(([sessionId, p]) => ({
+        sessionId,
+        x: p.x,
+        z: p.z,
+        isJumping: this.physics.get(sessionId)?.isJumping ?? false,
+      }));
 
-    for (const [enemyId, aiState] of this.enemies.entries()) {
-      const result = stepEnemyAI(aiState, DEFAULT_ENEMY_CONFIG, livingPlayers, now, dt, Math.random);
-      this.enemies.set(enemyId, result.state);
+    const enemyIds = [...this.enemies.keys()];
+    const stepResults = enemyIds.map((enemyId) =>
+      stepEnemyAI(this.enemies.get(enemyId)!, DEFAULT_ENEMY_CONFIG, livingPlayers, now, dt, Math.random),
+    );
+    const separatedStates = separateEnemies(stepResults.map((r) => r.state), Math.random);
+
+    enemyIds.forEach((enemyId, index) => {
+      const state = separatedStates[index];
+      const result = stepResults[index];
+      this.enemies.set(enemyId, state);
 
       const enemy = this.state.enemies.get(enemyId);
       if (enemy) {
-        enemy.x = result.state.x;
-        enemy.y = result.state.y;
-        enemy.z = result.state.z;
-        enemy.rotY = result.state.rotY;
-        enemy.health = result.state.health;
-        enemy.broken = result.state.broken;
+        enemy.x = state.x;
+        enemy.y = state.y;
+        enemy.z = state.z;
+        enemy.rotY = state.rotY;
+        enemy.health = state.health;
+        enemy.broken = state.broken;
       }
 
       for (const event of result.events) {
@@ -193,7 +216,7 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
           this.broadcast(ServerEvent.EnemyRespawned, { enemyId });
         }
       }
-    }
+    });
   }
 
   private handleFire(sessionId: string, payload: FirePayload): void {
@@ -220,11 +243,29 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
     const targets: HitTarget[] = [];
     for (const [otherId, other] of this.state.players.entries()) {
       if (otherId === sessionId || other.isDead) continue;
-      targets.push({ id: otherId, x: other.x, y: other.y - PLAYER_HIT_CENTER_DROP, z: other.z, radius: PLAYER_HIT_RADIUS });
+      targets.push({
+        kind: "capsule",
+        id: otherId,
+        x: other.x,
+        z: other.z,
+        yBottom: other.y - PLAYER_HIT_HALF_HEIGHT,
+        yTop: other.y + PLAYER_HIT_HALF_HEIGHT,
+        radius: PLAYER_HIT_RADIUS,
+      });
     }
     for (const [enemyId, enemy] of this.state.enemies.entries()) {
       if (enemy.broken) continue;
-      targets.push({ id: enemyId, x: enemy.x, y: enemy.y, z: enemy.z, radius: ENEMY_HIT_RADIUS });
+      targets.push({
+        kind: "box",
+        id: enemyId,
+        x: enemy.x,
+        y: enemy.y,
+        z: enemy.z,
+        rotY: enemy.rotY,
+        halfWidth: ENEMY_HIT_HALF_WIDTH,
+        halfHeight: ENEMY_HIT_HALF_HEIGHT,
+        halfDepth: ENEMY_HIT_HALF_DEPTH,
+      });
     }
 
     const hit = raycastClosestHit(payload.originX, payload.originY, payload.originZ, dirX, dirY, dirZ, MAX_BULLET_RANGE, targets);
@@ -266,6 +307,9 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
     const player = this.state.players.get(sessionId);
     if (!player || player.isDead) return;
 
+    const invincibleUntil = this.playerInvincibleUntil.get(sessionId);
+    if (invincibleUntil !== undefined && now < invincibleUntil) return;
+
     player.health = Math.max(0, player.health - amount);
     if (player.health <= 0) {
       player.isDead = true;
@@ -273,8 +317,9 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
     }
   }
 
-  private respawnPlayer(sessionId: string, player: PlayerState): void {
+  private respawnPlayer(sessionId: string, player: PlayerState, now: number): void {
     this.playerRespawnAt.delete(sessionId);
+    this.playerInvincibleUntil.set(sessionId, now + RESPAWN_INVINCIBILITY_MS);
     player.health = PLAYER_MAX_HEALTH;
     player.isDead = false;
     player.x = SPAWN_POSITION.x;

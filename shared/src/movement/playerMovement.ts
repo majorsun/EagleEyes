@@ -6,6 +6,7 @@ import {
   MOAT_FLOOR_Y,
   JUMP_SPEED,
   GRAVITY_ACCEL,
+  MAX_JUMPS,
   SLIDE_DISTANCE,
   SLIDE_SPEED,
   PRONE_EYE_DROP,
@@ -23,6 +24,8 @@ export interface PlayerPhysicsState {
   z: number;
   velocityY: number;
   isJumping: boolean;
+  /** Jumps used since last touching the ground; reset to 0 on landing. */
+  jumpCount: number;
   isSliding: boolean;
   slideDirX: number;
   slideDirZ: number;
@@ -44,6 +47,7 @@ export function createSpawnPhysicsState(): PlayerPhysicsState {
     z: SPAWN_PLATFORM_POSITION.z,
     velocityY: 0,
     isJumping: false,
+    jumpCount: 0,
     isSliding: false,
     slideDirX: 0,
     slideDirZ: 0,
@@ -102,10 +106,11 @@ function unprone(state: PlayerPhysicsState): PlayerPhysicsState {
   return { ...state, isProne: false, y: GROUND_EYE_HEIGHT };
 }
 
-/** No cooldown: spamming the trigger keeps re-boosting upward, letting the player scale terrain a jump alone couldn't reach. */
+/** Double jump: allows one jump from the ground plus one more mid-air; a third press is ignored until landing. */
 export function triggerJump(state: PlayerPhysicsState): PlayerPhysicsState {
+  if (state.jumpCount >= MAX_JUMPS) return state;
   const next = unprone(state);
-  return { ...next, isJumping: true, velocityY: JUMP_SPEED };
+  return { ...next, isJumping: true, velocityY: JUMP_SPEED, jumpCount: next.jumpCount + 1 };
 }
 
 export function triggerSlide(state: PlayerPhysicsState, yaw: number): PlayerPhysicsState {
@@ -140,6 +145,7 @@ export function teleport(state: PlayerPhysicsState): PlayerPhysicsState {
     z: destination.z,
     y: GROUND_EYE_HEIGHT,
     isJumping: false,
+    jumpCount: 0,
     velocityY: 0,
     isSliding: false,
     isProne: false,
@@ -192,6 +198,7 @@ export function stepMovement(
   let y = next.y;
   let velocityY = next.velocityY;
   let isJumping = next.isJumping;
+  let jumpCount = next.jumpCount;
   if (isJumping) {
     velocityY += GRAVITY_ACCEL * dt;
     y += velocityY * dt;
@@ -200,10 +207,12 @@ export function stepMovement(
       y = groundY;
       velocityY = 0;
       isJumping = false;
+      jumpCount = 0;
     }
   } else if (!next.isProne) {
     y = groundSurfaceHeightAt(x, z, terrain) + GROUND_EYE_HEIGHT;
+    jumpCount = 0;
   }
 
-  return { ...next, x, y, z, velocityY, isJumping, isSliding, slideRemaining };
+  return { ...next, x, y, z, velocityY, isJumping, jumpCount, isSliding, slideRemaining };
 }
