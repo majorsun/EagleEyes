@@ -19,6 +19,84 @@
         touch-action: none;
       }
 
+      #cosmeticsButton {
+        position: fixed;
+        left: 16px;
+        bottom: 56px;
+        z-index: 30;
+        padding: 8px 14px;
+        font: 600 12px/1 system-ui, sans-serif;
+        letter-spacing: 0.08em;
+        color: #cfd6e0;
+        background: rgba(12, 16, 22, 0.78);
+        border: 1px solid rgba(150, 170, 200, 0.35);
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      #cosmeticsButton:hover {
+        color: #fff;
+        border-color: rgba(190, 210, 235, 0.7);
+      }
+
+      #cosmeticsPanel {
+        display: none;
+        position: fixed;
+        left: 16px;
+        bottom: 96px;
+        z-index: 31;
+        width: 232px;
+        padding: 14px;
+        background: rgba(10, 13, 18, 0.93);
+        border: 1px solid rgba(150, 170, 200, 0.3);
+        border-radius: 6px;
+        font: 12px/1.4 system-ui, sans-serif;
+        color: #cfd6e0;
+      }
+      #cosmeticsPanel.open {
+        display: block;
+      }
+      #cosmeticsPanel h2 {
+        margin: 0 0 10px;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        color: #8fa0b8;
+      }
+      .cosmeticsOption {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        margin-bottom: 6px;
+        padding: 6px 8px;
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        color: inherit;
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .cosmeticsOption:hover {
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .cosmeticsOption[aria-pressed="true"] {
+        border-color: rgba(120, 190, 255, 0.8);
+        background: rgba(60, 120, 190, 0.18);
+      }
+      .cosmeticsSwatch {
+        width: 18px;
+        height: 18px;
+        border-radius: 3px;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        flex: none;
+      }
+      #cosmeticsHint {
+        margin-top: 8px;
+        color: #6f7f96;
+        font-size: 11px;
+      }
+
       #crosshair {
         position: fixed;
         top: 50%;
@@ -287,6 +365,12 @@
       <div id="invincibilityRing"></div>
       <span id="invincibilityIcon">&#x1F6E1;</span>
       <span id="invincibilityTimer"></span>
+    </div>
+    <button id="cosmeticsButton" type="button">COSMETICS</button>
+    <div id="cosmeticsPanel">
+      <h2>OPERATOR SKIN</h2>
+      <div id="cosmeticsOptions"></div>
+      <div id="cosmeticsHint">B to toggle &middot; click the view to resume</div>
     </div>
     <div id="radar">
       <canvas id="radarCanvas" width="160" height="160"></canvas>

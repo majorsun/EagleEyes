@@ -12,6 +12,9 @@ import { GridMaterial, SkyMaterial } from "@babylonjs/materials";
 import {
   createDefaultSniper,
   ClientMessage,
+  PLAYER_SKINS,
+  clampPlayerSkin,
+  type SetSkinPayload,
   ServerEvent,
   type PlayerInput,
   type KnifeStabEvent,
@@ -296,7 +299,9 @@ const enemyViews = new Map<string, EnemyView>();
 
 stateCallbacks(room.state).players.onAdd((player, sessionId) => {
   if (sessionId === localSessionId) return;
-  remotePlayers.set(sessionId, new RemotePlayerView(scene, player.x, player.y, player.z, player.rotY));
+  const view = new RemotePlayerView(scene, player.x, player.y, player.z, player.rotY, player.skin);
+  remotePlayers.set(sessionId, view);
+  stateCallbacks(player).listen("skin", (value) => view.setSkin(value));
 });
 stateCallbacks(room.state).players.onRemove((_player, sessionId) => {
   remotePlayers.get(sessionId)?.dispose();
@@ -497,6 +502,71 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
+// --- Cosmetics menu -------------------------------------------------------------------------
+const cosmeticsButton = document.getElementById("cosmeticsButton") as HTMLButtonElement;
+const cosmeticsPanel = document.getElementById("cosmeticsPanel") as HTMLDivElement;
+const cosmeticsOptions = document.getElementById("cosmeticsOptions") as HTMLDivElement;
+const SKIN_STORAGE_KEY = "eagleeyes.skin";
+
+function rgbToCss([r, g, b]: readonly [number, number, number]): string {
+  const channel = (value: number) => Math.round(Math.min(1, Math.max(0, value)) * 255);
+  return `rgb(${channel(r)}, ${channel(g)}, ${channel(b)})`;
+}
+
+/** Private browsing and blocked site data make localStorage throw, which shouldn't cost a round. */
+function readStoredSkin(): number {
+  try {
+    return clampPlayerSkin(localStorage.getItem(SKIN_STORAGE_KEY));
+  } catch {
+    return 0;
+  }
+}
+
+let selectedSkin = readStoredSkin();
+
+const skinButtons = PLAYER_SKINS.map((skin, index) => {
+  const option = document.createElement("button");
+  option.type = "button";
+  option.className = "cosmeticsOption";
+  const swatch = document.createElement("span");
+  swatch.className = "cosmeticsSwatch";
+  swatch.style.background = rgbToCss(skin.uniform);
+  option.append(swatch, document.createTextNode(skin.label));
+  option.addEventListener("click", () => selectSkin(index));
+  cosmeticsOptions.append(option);
+  return option;
+});
+
+/**
+ * Stores the choice and publishes it to the room. The skin lives in player state rather than
+ * staying local, because the point of it is what everyone *else* sees on your operator.
+ */
+function selectSkin(index: number): void {
+  selectedSkin = clampPlayerSkin(index);
+  try {
+    localStorage.setItem(SKIN_STORAGE_KEY, String(selectedSkin));
+  } catch {
+    // Not worth surfacing: the choice still applies for this session.
+  }
+  skinButtons.forEach((option, i) => option.setAttribute("aria-pressed", String(i === selectedSkin)));
+  room.send(ClientMessage.SetSkin, { skin: selectedSkin } satisfies SetSkinPayload);
+}
+
+function setCosmeticsOpen(open: boolean): void {
+  cosmeticsPanel.classList.toggle("open", open);
+  // Mouse look holds a pointer lock, which hides the cursor and swallows clicks -- release it
+  // while the menu is up. Clicking the view re-locks it, as it does on first load.
+  if (open && document.pointerLockElement) document.exitPointerLock();
+}
+
+cosmeticsButton.addEventListener("click", () => setCosmeticsOpen(!cosmeticsPanel.classList.contains("open")));
+window.addEventListener("keydown", (e) => {
+  if (e.code === "KeyB") setCosmeticsOpen(!cosmeticsPanel.classList.contains("open"));
+  else if (e.code === "Escape") setCosmeticsOpen(false);
+});
+
+selectSkin(selectedSkin);
+
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
 canvas.addEventListener("click", () => {
@@ -568,7 +638,8 @@ const RADAR_RADIUS_PX = radarCanvas.width / 2;
 const RADAR_BLIP_RADIUS_PX = 5;
 // Keep in sync with EnemyView's BODY_COLORS palette so a given enemy reads the same color here.
 const RADAR_ENEMY_COLORS = ["#cc1a1a", "#d9800d", "#9926cc"];
-// Keep in sync with RemotePlayerView's capsule material color.
+// HUD blue for other players -- deliberately not the figure's shirt color, so a blip stays
+// readable against the radar background.
 const RADAR_PLAYER_COLOR = "#3380d9";
 
 /**

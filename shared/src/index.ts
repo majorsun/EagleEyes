@@ -1,6 +1,7 @@
 export * from "./weapons/Weapon";
 export * from "./weapons/Sniper";
 export * from "./combat/Damageable";
+export * from "./cosmetics/playerSkins";
 export * from "./combat/enemyAI";
 export * from "./combat/hitscan";
 export * from "./combat/zones";

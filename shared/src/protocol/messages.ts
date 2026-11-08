@@ -6,6 +6,7 @@ export const ClientMessage = {
   Teleport: "teleport",
   Fire: "fire",
   Reload: "reload",
+  SetSkin: "setSkin",
 } as const;
 
 export interface InputPayload {
@@ -13,6 +14,11 @@ export interface InputPayload {
   moveZ: number;
   yaw: number;
   seq: number;
+}
+
+export interface SetSkinPayload {
+  /** Index into PLAYER_SKINS; the server clamps it, so a bad value just falls back to 0. */
+  skin: number;
 }
 
 export interface FirePayload {

@@ -7,6 +7,8 @@ import {
   ServerEvent,
   type InputPayload,
   type FirePayload,
+  type SetSkinPayload,
+  clampPlayerSkin,
   stepMovement,
   triggerJump,
   triggerSlide,
@@ -107,6 +109,13 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
     });
     this.onMessage(ClientMessage.Fire, (client, message: FirePayload) => {
       this.handleFire(client.sessionId, message);
+    });
+    // Cosmetic only -- it rides in player state so every other client paints the same skin on
+    // this player's model. Clamped, since the index comes straight off the wire.
+    this.onMessage(ClientMessage.SetSkin, (client, message: SetSkinPayload) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+      player.skin = clampPlayerSkin(message?.skin);
     });
     this.onMessage(ClientMessage.Reload, (client) => {
       const player = this.state.players.get(client.sessionId);

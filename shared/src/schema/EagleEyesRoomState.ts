@@ -11,6 +11,7 @@ export const PlayerState = schema(
     isProne: t.boolean().default(false),
     isScoped: t.boolean().default(false),
     ammo: t.uint8().default(5),
+    skin: t.uint8().default(0),
     lastProcessedSeq: t.uint32().default(0),
     sessionId: t.string(),
   },
