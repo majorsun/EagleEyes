@@ -299,9 +299,10 @@ const enemyViews = new Map<string, EnemyView>();
 
 stateCallbacks(room.state).players.onAdd((player, sessionId) => {
   if (sessionId === localSessionId) return;
-  const view = new RemotePlayerView(scene, player.x, player.y, player.z, player.rotY, player.skin);
+  const view = new RemotePlayerView(scene, player.x, player.y, player.z, player.rotY, player.skin, player.isProne);
   remotePlayers.set(sessionId, view);
   stateCallbacks(player).listen("skin", (value) => view.setSkin(value));
+  stateCallbacks(player).listen("isProne", (value) => view.setProne(value));
 });
 stateCallbacks(room.state).players.onRemove((_player, sessionId) => {
   remotePlayers.get(sessionId)?.dispose();

@@ -14,7 +14,13 @@ import {
   Vector3,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
-import { PLAYER_SKINS, DEFAULT_PLAYER_SKIN, GROUND_EYE_HEIGHT, type PlayerSkin } from "@eagleeyes/shared";
+import {
+  PLAYER_SKINS,
+  DEFAULT_PLAYER_SKIN,
+  GROUND_EYE_HEIGHT,
+  PRONE_EYE_DROP,
+  type PlayerSkin,
+} from "@eagleeyes/shared";
 import { spawnDebris } from "./debris";
 
 const LERP_RATE = 12;
@@ -35,6 +41,13 @@ const MODEL_HEIGHT = 1.8;
  * about 0.9m above the sand.
  */
 const MODEL_FEET_OFFSET = -GROUND_EYE_HEIGHT;
+/**
+ * Prone drops the eye by PRONE_EYE_DROP without changing anything else, so the body hangs that
+ * much closer to the ground. Going prone is also the only pose you hold while standing still --
+ * any movement input unprones you -- so a figure that ignores it looks like it sinks whenever
+ * its player stops moving.
+ */
+const PRONE_FEET_OFFSET = -(GROUND_EYE_HEIGHT - PRONE_EYE_DROP);
 /** The model already faces +Z, which is what the rest of the game treats as a player's facing. */
 const MODEL_FACING_OFFSET = 0;
 /**
@@ -106,6 +119,12 @@ export class RemotePlayerView {
   private placeholder: TransformNode | null = null;
   private instance: InstantiatedEntries | null = null;
   private weapon: Mesh | null = null;
+  private model: TransformNode | null = null;
+  /** Metres the model must be lifted for its soles to sit on the figure's own ground plane. */
+  private modelSoleLift = 0;
+  /** Same, for the lying pose: the model's rotated-down extent below its origin. */
+  private modelProneLift = 0;
+  private isProneState: boolean;
   private idleAnimation: AnimationGroup | null = null;
   private runAnimation: AnimationGroup | null = null;
   private activeAnimation: AnimationGroup | null = null;
@@ -125,8 +144,10 @@ export class RemotePlayerView {
     z: number,
     rotY: number,
     skin: number = DEFAULT_PLAYER_SKIN,
+    isProne = false,
   ) {
     this.skinIndex = skin;
+    this.isProneState = isProne;
     this.root = new TransformNode("remotePlayerRoot", scene);
     this.root.position = new Vector3(x, y, z);
     this.root.rotation.y = rotY;
@@ -167,8 +188,13 @@ export class RemotePlayerView {
     const authoredHeight = bounds.max.y - bounds.min.y;
     const scale = authoredHeight > 0 ? MODEL_HEIGHT / authoredHeight : 1;
     model.scaling.setAll(scale);
-    model.position.y = MODEL_FEET_OFFSET - bounds.min.y * scale;
     model.parent = this.root;
+    this.model = model;
+    this.modelSoleLift = -bounds.min.y * scale;
+    // Lying down rotates the model -90 degrees about X, which swaps its depth onto the vertical
+    // axis -- so the belly, not the soles, becomes the lowest point.
+    this.modelProneLift = -bounds.min.z * scale;
+    this.applyStance();
 
     for (const group of instance.animationGroups) {
       group.stop();
@@ -181,6 +207,26 @@ export class RemotePlayerView {
 
     this.placeholder?.dispose();
     this.placeholder = null;
+  }
+
+  /** Mirrors the server's prone flag; safe to call before the model has finished loading. */
+  setProne(isProne: boolean): void {
+    if (isProne === this.isProneState) return;
+    this.isProneState = isProne;
+    this.applyStance();
+  }
+
+  /** Seats the model for the current stance so it rests on the ground either way. */
+  private applyStance(): void {
+    const model = this.model;
+    if (!model) return;
+    if (this.isProneState) {
+      model.rotation.x = -Math.PI / 2;
+      model.position.y = PRONE_FEET_OFFSET + this.modelProneLift;
+    } else {
+      model.rotation.x = 0;
+      model.position.y = MODEL_FEET_OFFSET + this.modelSoleLift;
+    }
   }
 
   /** Switches this player's cosmetic skin; safe to call before the model has finished loading. */
@@ -274,7 +320,7 @@ export class RemotePlayerView {
     const placeholder = new TransformNode("remotePlayerPlaceholder", this.scene);
     placeholder.parent = this.root;
     // Its parts are authored with the soles at -0.9; shift the group so they reach the ground.
-    placeholder.position.y = MODEL_FEET_OFFSET + 0.9;
+    placeholder.position.y = (this.isProneState ? PRONE_FEET_OFFSET : MODEL_FEET_OFFSET) + 0.9;
     this.placeholder = placeholder;
 
     const material = (name: string, color: Color3) => {
