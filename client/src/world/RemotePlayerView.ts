@@ -14,7 +14,7 @@ import {
   Vector3,
 } from "@babylonjs/core";
 import "@babylonjs/loaders/glTF";
-import { PLAYER_SKINS, DEFAULT_PLAYER_SKIN, type PlayerSkin } from "@eagleeyes/shared";
+import { PLAYER_SKINS, DEFAULT_PLAYER_SKIN, GROUND_EYE_HEIGHT, type PlayerSkin } from "@eagleeyes/shared";
 import { spawnDebris } from "./debris";
 
 const LERP_RATE = 12;
@@ -27,8 +27,14 @@ const CRUMBLE_SINK_SPEED = 1.5;
 // set of materials.
 const MODEL_ROOT_URL = "/models/";
 const MODEL_FILE = "operator.glb";
-/** Metres from sole to crown. Matches the 1.8-tall, feet-at-root silhouette the capsule used. */
+/** Metres from sole to crown. */
 const MODEL_HEIGHT = 1.8;
+/**
+ * A player's networked y is their EYE height, not their centre or their feet, so the figure hangs
+ * a full GROUND_EYE_HEIGHT below the root. The old blocky stand-in used half that and floated
+ * about 0.9m above the sand.
+ */
+const MODEL_FEET_OFFSET = -GROUND_EYE_HEIGHT;
 /** The model already faces +Z, which is what the rest of the game treats as a player's facing. */
 const MODEL_FACING_OFFSET = 0;
 /**
@@ -152,17 +158,17 @@ export class RemotePlayerView {
 
     const model = new TransformNode("remotePlayerModel", this.scene);
     for (const node of instance.rootNodes) node.parent = model;
-    model.parent = this.root;
     model.rotation.y = MODEL_FACING_OFFSET;
 
-    // Measure before scaling, then scale to MODEL_HEIGHT and lift so the lowest vertex lands on
-    // the figure's own ground plane. Authored models vary in both units and pivot height, so
-    // deriving this beats hard-coding a scale that silently breaks if the asset is swapped.
+    // Measure while the model still sits at the origin, BEFORE parenting it to the player root.
+    // getHierarchyBoundingVectors reports world space, so measuring after parenting folds the
+    // player's own Y into the offset and buries the figure that far into the ground.
     const bounds = model.getHierarchyBoundingVectors();
     const authoredHeight = bounds.max.y - bounds.min.y;
     const scale = authoredHeight > 0 ? MODEL_HEIGHT / authoredHeight : 1;
     model.scaling.setAll(scale);
-    model.position.y = -0.9 - bounds.min.y * scale;
+    model.position.y = MODEL_FEET_OFFSET - bounds.min.y * scale;
+    model.parent = this.root;
 
     for (const group of instance.animationGroups) {
       group.stop();
@@ -267,6 +273,8 @@ export class RemotePlayerView {
   private buildPlaceholder(): void {
     const placeholder = new TransformNode("remotePlayerPlaceholder", this.scene);
     placeholder.parent = this.root;
+    // Its parts are authored with the soles at -0.9; shift the group so they reach the ground.
+    placeholder.position.y = MODEL_FEET_OFFSET + 0.9;
     this.placeholder = placeholder;
 
     const material = (name: string, color: Color3) => {
