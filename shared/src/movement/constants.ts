@@ -51,6 +51,8 @@ export const PLAYER_HIT_RADIUS = 0.4;
 export const PLAYER_HIT_HALF_HEIGHT = 0.9;
 
 /** Matches EnemyView's box mesh (width 1, height 1.6, depth 0.2), centered on enemy.y. */
-export const ENEMY_HIT_HALF_WIDTH = 0.5;
+// Sized to the rendered ninja (shoulders ~0.72 wide, body ~0.36 deep) rather than the flat
+// slab the enemies used to be drawn as, so shots land where the figure actually is.
+export const ENEMY_HIT_HALF_WIDTH = 0.36;
 export const ENEMY_HIT_HALF_HEIGHT = 0.8;
-export const ENEMY_HIT_HALF_DEPTH = 0.1;
+export const ENEMY_HIT_HALF_DEPTH = 0.18;

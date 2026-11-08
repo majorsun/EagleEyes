@@ -35,6 +35,8 @@ export const ServerEvent = {
   EnemyBroken: "enemyBroken",
   EnemyRespawned: "enemyRespawned",
   BulletFired: "bulletFired",
+  ShurikenThrown: "shurikenThrown",
+  ShurikenGone: "shurikenGone",
 } as const;
 
 export interface KnifeStabEvent {
@@ -50,6 +52,27 @@ export interface EnemyBrokenEvent {
 
 export interface EnemyRespawnedEvent {
   enemyId: string;
+}
+
+export interface ShurikenThrownEvent {
+  id: string;
+  enemyId: string;
+  originX: number;
+  originY: number;
+  originZ: number;
+  dirX: number;
+  dirY: number;
+  dirZ: number;
+}
+
+/** Sent when a star stops existing, so clients can retire the one they are animating. */
+export interface ShurikenGoneEvent {
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+  /** True if it struck a player, false if it simply ran out of range. */
+  hit: boolean;
 }
 
 export interface BulletFiredEvent {

@@ -28,6 +28,9 @@ import {
   type HitTarget,
   createDefaultSniper,
   Sniper,
+  createShuriken,
+  stepShuriken,
+  type ShurikenState,
   isInPvpZone,
   WORLD_SEED,
   TELEPORT_PLATFORM_POSITION,
@@ -55,6 +58,8 @@ const DEFAULT_ENEMY_CONFIG: EnemyAIConfig = {
   attackRange: 2.2,
   attackDamage: 10,
   attackIntervalMs: 700,
+  throwRange: 22,
+  throwIntervalMs: 2200,
 };
 
 const DEFAULT_INPUT: InputPayload = { moveX: 0, moveZ: 0, yaw: 0, seq: 0 };
@@ -67,6 +72,8 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
   );
   private readonly latestInputs = new Map<string, InputPayload>();
   private readonly physics = new Map<string, PlayerPhysicsState>();
+  private readonly shurikens = new Map<string, ShurikenState>();
+  private shurikenSeq = 0;
   private readonly playerRespawnAt = new Map<string, number>();
   private readonly playerInvincibleUntil = new Map<string, number>();
   private readonly enemies = new Map<string, EnemyAIState>();
@@ -208,6 +215,7 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
       .map(([sessionId, p]) => ({
         sessionId,
         x: p.x,
+        y: p.y,
         z: p.z,
         isJumping: this.physics.get(sessionId)?.isJumping ?? false,
       }));
@@ -237,6 +245,8 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
         if (event.type === "attack") {
           this.damagePlayer(event.targetSessionId, event.damage, now);
           this.broadcast(ServerEvent.KnifeStab, { enemyId });
+        } else if (event.type === "throw") {
+          this.throwShuriken(enemyId, event);
         } else if (event.type === "broken") {
           this.broadcast(ServerEvent.EnemyBroken, { enemyId, x: event.x, y: event.y, z: event.z });
         } else if (event.type === "respawned") {
@@ -244,6 +254,54 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
         }
       }
     });
+
+    this.stepShurikens(livingPlayers, now, dt);
+  }
+
+  /** Spawns a star from an AI throw event and tells clients to start animating it. */
+  private throwShuriken(
+    enemyId: string,
+    event: { originX: number; originY: number; originZ: number; dirX: number; dirY: number; dirZ: number },
+  ): void {
+    const id = `shuriken-${this.shurikenSeq++}`;
+    const state = createShuriken(
+      id,
+      enemyId,
+      { x: event.originX, y: event.originY, z: event.originZ },
+      { x: event.dirX, y: event.dirY, z: event.dirZ },
+    );
+    this.shurikens.set(id, state);
+    this.broadcast(ServerEvent.ShurikenThrown, {
+      id,
+      enemyId,
+      originX: state.x,
+      originY: state.y,
+      originZ: state.z,
+      dirX: state.dirX,
+      dirY: state.dirY,
+      dirZ: state.dirZ,
+    });
+  }
+
+  /**
+   * Flies every in-flight star. Damage is applied here rather than client-side, so a star that
+   * looks like a near miss on one screen can never cost that player health.
+   */
+  private stepShurikens(targets: { sessionId: string; x: number; y: number; z: number }[], now: number, dt: number): void {
+    for (const [id, state] of [...this.shurikens]) {
+      const outcome = stepShuriken(state, targets, dt);
+      if (outcome.type === "flying") {
+        this.shurikens.set(id, outcome.state);
+        continue;
+      }
+
+      this.shurikens.delete(id);
+      const hit = outcome.type === "hit";
+      if (outcome.type === "hit") {
+        this.damagePlayer(outcome.targetSessionId, outcome.damage, now);
+      }
+      this.broadcast(ServerEvent.ShurikenGone, { id, x: outcome.x, y: outcome.y, z: outcome.z, hit });
+    }
   }
 
   private isInvincible(sessionId: string, now: number): boolean {

@@ -4,6 +4,7 @@ export * from "./combat/Damageable";
 export * from "./cosmetics/playerSkins";
 export * from "./combat/enemyAI";
 export * from "./combat/hitscan";
+export * from "./combat/shuriken";
 export * from "./combat/zones";
 export * from "./schema/EagleEyesRoomState";
 export * from "./protocol/messages";

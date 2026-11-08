@@ -20,6 +20,8 @@ import {
   type KnifeStabEvent,
   type EnemyBrokenEvent,
   type EnemyRespawnedEvent,
+  type ShurikenThrownEvent,
+  type ShurikenGoneEvent,
   type BulletFiredEvent,
   generateTerrain,
   type TerrainData,
@@ -44,6 +46,7 @@ import { connectToRoom } from "./net/connection";
 import { InputReconciler } from "./net/InputReconciler";
 import { RemotePlayerView } from "./world/RemotePlayerView";
 import { EnemyView } from "./world/EnemyView";
+import { ShurikenField } from "./world/ShurikenField";
 
 const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
 const crosshair = document.getElementById("crosshair") as HTMLDivElement;
@@ -296,6 +299,7 @@ const localSessionId = room.sessionId;
 const reconciler = new InputReconciler(createSpawnPhysicsState(), terrain);
 const remotePlayers = new Map<string, RemotePlayerView>();
 const enemyViews = new Map<string, EnemyView>();
+const shurikens = new ShurikenField(scene);
 
 stateCallbacks(room.state).players.onAdd((player, sessionId) => {
   if (sessionId === localSessionId) return;
@@ -329,12 +333,24 @@ room.onMessage(ServerEvent.KnifeStab, (payload: KnifeStabEvent) => {
 room.onMessage(ServerEvent.EnemyBroken, (payload: EnemyBrokenEvent) => {
   enemyViews.get(payload.enemyId)?.break(payload.x, payload.y, payload.z);
 });
+room.onMessage(ServerEvent.ShurikenThrown, (payload: ShurikenThrownEvent) => {
+  enemyViews.get(payload.enemyId)?.throwAnimation();
+  shurikens.spawn(
+    payload.id,
+    new Vector3(payload.originX, payload.originY, payload.originZ),
+    new Vector3(payload.dirX, payload.dirY, payload.dirZ),
+  );
+});
+room.onMessage(ServerEvent.ShurikenGone, (payload: ShurikenGoneEvent) => {
+  shurikens.retire(payload.id, new Vector3(payload.x, payload.y, payload.z), payload.hit);
+});
 room.onMessage(ServerEvent.EnemyRespawned, (payload: EnemyRespawnedEvent) => {
   const enemy = room.state.enemies.get(payload.enemyId);
   if (enemy) enemyViews.get(payload.enemyId)?.respawn(enemy.x, enemy.y, enemy.z);
 });
 
 function updateEnemies(deltaSeconds: number): void {
+  shurikens.update(deltaSeconds);
   for (const [enemyId, view] of enemyViews) {
     const enemy = room.state.enemies.get(enemyId);
     if (!enemy) continue;
@@ -640,7 +656,8 @@ function updateHud(): void {
 const RADAR_RANGE = 60;
 const RADAR_RADIUS_PX = radarCanvas.width / 2;
 const RADAR_BLIP_RADIUS_PX = 5;
-// Keep in sync with EnemyView's BODY_COLORS palette so a given enemy reads the same color here.
+// Keep in sync with EnemyView's ACCENT_COLORS palette (the ninjas' sashes and headbands) so a
+// given enemy reads as the same color here as it does in the world.
 const RADAR_ENEMY_COLORS = ["#cc1a1a", "#d9800d", "#9926cc"];
 // HUD blue for other players -- deliberately not the figure's shirt color, so a blip stays
 // readable against the radar background.
