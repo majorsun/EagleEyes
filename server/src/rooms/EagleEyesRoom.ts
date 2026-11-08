@@ -139,6 +139,10 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
     this.physics.set(client.sessionId, createSpawnPhysicsState());
     this.latestInputs.set(client.sessionId, DEFAULT_INPUT);
     this.snipers.set(client.sessionId, createDefaultSniper());
+    // A joining player lands on the spawn platform exactly like a respawning one, and the enemies
+    // camp it -- without the same grace window they are knifed to death within a couple of
+    // seconds of the page loading, before they can even look around.
+    this.playerInvincibleUntil.set(client.sessionId, Date.now() + RESPAWN_INVINCIBILITY_MS);
     console.log(`${client.sessionId} joined (${this.state.players.size} players)`);
   }
 

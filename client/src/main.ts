@@ -363,7 +363,10 @@ function isLocalPlayerDead(): boolean {
 const INPUT_SEND_INTERVAL = 1 / 30;
 let inputSendAccumulator = 0;
 let wasDeadLastFrame = false;
-let invincibleUntil = 0;
+// Joining is a spawn like any other and the server grants the grace window in onJoin, so start
+// the local mirror of it here too -- otherwise the shield HUD and the local fire-block disagree
+// with the server for the first three seconds of every session.
+let invincibleUntil = performance.now() + RESPAWN_INVINCIBILITY_MS;
 
 function updateNetworkedMovement(deltaSeconds: number): void {
   const localPlayer = room.state.players.get(localSessionId);
