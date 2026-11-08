@@ -14,6 +14,10 @@ import {
   ClientMessage,
   PLAYER_SKINS,
   clampPlayerSkin,
+  createDefaultMinigun,
+  WeaponSlot,
+  type WeaponSlotValue,
+  type SwitchWeaponPayload,
   type SetSkinPayload,
   ServerEvent,
   type PlayerInput,
@@ -41,6 +45,9 @@ import {
   isInPvpZone,
 } from "@eagleeyes/shared";
 import { createSniperViewModel } from "./weapons/SniperViewModel";
+import { createMinigunViewModel } from "./weapons/MinigunViewModel";
+import { CameraMotion } from "./view/CameraMotion";
+import { Sfx } from "./audio/Sfx";
 import { BulletTracer } from "./weapons/BulletTracer";
 import { connectToRoom } from "./net/connection";
 import { InputReconciler } from "./net/InputReconciler";
@@ -147,6 +154,34 @@ function buildTerrainVisuals(scene: Scene, terrain: TerrainData): void {
     ledge.material = duneMat;
   });
 
+  const mesaMat = new StandardMaterial("mesaMat", scene);
+  mesaMat.diffuseColor = new Color3(0.52, 0.37, 0.26);
+  mesaMat.specularColor = new Color3(0.08, 0.08, 0.08);
+
+  const mesaCapMat = new StandardMaterial("mesaCapMat", scene);
+  mesaCapMat.diffuseColor = new Color3(0.62, 0.46, 0.32);
+  mesaCapMat.specularColor = new Color3(0.06, 0.06, 0.06);
+
+  terrain.mesas.forEach((mesa, i) => {
+    // Flat-topped, straight-sided: the collision treats the whole disc as one height, so the
+    // mesh has to read as a shelf you step onto rather than a slope you walk up.
+    const body = MeshBuilder.CreateCylinder(
+      `mesa${i}`,
+      { diameterTop: mesa.radius * 2, diameterBottom: mesa.radius * 2.2, height: mesa.height, tessellation: 12 },
+      scene,
+    );
+    body.position = new Vector3(mesa.x, mesa.height / 2, mesa.z);
+    body.material = mesaMat;
+
+    const cap = MeshBuilder.CreateCylinder(
+      `mesaCap${i}`,
+      { diameter: mesa.radius * 2, height: 0.12, tessellation: 12 },
+      scene,
+    );
+    cap.position = new Vector3(mesa.x, mesa.height, mesa.z);
+    cap.material = mesaCapMat;
+  });
+
   terrain.hills.forEach((hill, i) => {
     const mesh = MeshBuilder.CreateSphere(
       `hill${i}`,
@@ -181,9 +216,66 @@ function createDecorations(scene: Scene, centerX: number, centerZ: number): void
     return new Vector3(centerX + Math.cos(angle) * radius, 0, centerZ + Math.sin(angle) * radius);
   };
 
-  for (let i = 0; i < 6; i++) {
-    const pos = randomAround(6, 32);
-    const rocksInCluster = 2 + Math.floor(Math.random() * 3);
+  const woodMat = new StandardMaterial("deadWoodMat", scene);
+  woodMat.diffuseColor = new Color3(0.34, 0.25, 0.17);
+  woodMat.specularColor = new Color3(0.04, 0.04, 0.04);
+
+  const stoneMat = new StandardMaterial("ruinStoneMat", scene);
+  stoneMat.diffuseColor = new Color3(0.58, 0.52, 0.42);
+  stoneMat.specularColor = new Color3(0.06, 0.06, 0.06);
+
+  const scrubMat = new StandardMaterial("scrubMat", scene);
+  scrubMat.diffuseColor = new Color3(0.38, 0.36, 0.18);
+  scrubMat.specularColor = new Color3(0.03, 0.03, 0.03);
+
+  // Dead trees: a leaning trunk with a couple of bare branches.
+  for (let i = 0; i < 7; i++) {
+    const pos = randomAround(10, 45);
+    const trunkHeight = 2.2 + Math.random() * 2;
+    const trunk = MeshBuilder.CreateCylinder(`deadTrunk${i}`, { diameterTop: 0.12, diameterBottom: 0.3, height: trunkHeight, tessellation: 7 }, scene);
+    trunk.position = new Vector3(pos.x, trunkHeight / 2, pos.z);
+    trunk.rotation.z = (Math.random() - 0.5) * 0.3;
+    trunk.material = woodMat;
+
+    for (let b = 0; b < 2 + Math.floor(Math.random() * 2); b++) {
+      const branch = MeshBuilder.CreateCylinder(`deadBranch${i}_${b}`, { diameterTop: 0.03, diameterBottom: 0.1, height: 0.8 + Math.random() * 0.7, tessellation: 5 }, scene);
+      branch.position = new Vector3(pos.x + (Math.random() - 0.5) * 0.5, trunkHeight * (0.55 + Math.random() * 0.35), pos.z + (Math.random() - 0.5) * 0.5);
+      branch.rotation = new Vector3((Math.random() - 0.5) * 1.6, Math.random() * Math.PI, (Math.random() - 0.5) * 1.6);
+      branch.material = woodMat;
+    }
+  }
+
+  // Ruined walls: short broken runs of stone that make usable cover.
+  for (let i = 0; i < 5; i++) {
+    const pos = randomAround(14, 50);
+    const yaw = Math.random() * Math.PI;
+    const segments = 2 + Math.floor(Math.random() * 3);
+    for (let s = 0; s < segments; s++) {
+      const height = 0.7 + Math.random() * 1.1;
+      const block = MeshBuilder.CreateBox(`ruin${i}_${s}`, { width: 1.4, height, depth: 0.5 }, scene);
+      block.position = new Vector3(
+        pos.x + Math.cos(yaw) * s * 1.45,
+        height / 2,
+        pos.z + Math.sin(yaw) * s * 1.45,
+      );
+      block.rotation.y = yaw + (Math.random() - 0.5) * 0.12;
+      block.material = stoneMat;
+    }
+  }
+
+  // Dry scrub, scattered thickly and cheaply, to break up the empty sand.
+  for (let i = 0; i < 26; i++) {
+    const pos = randomAround(5, 55);
+    const size = 0.25 + Math.random() * 0.4;
+    const bush = MeshBuilder.CreatePolyhedron(`scrub${i}`, { type: 1, size }, scene);
+    bush.position = new Vector3(pos.x, size * 0.6, pos.z);
+    bush.rotation = new Vector3(Math.random(), Math.random() * Math.PI, Math.random());
+    bush.material = scrubMat;
+  }
+
+  for (let i = 0; i < 10; i++) {
+    const pos = randomAround(6, 48);
+    const rocksInCluster = 2 + Math.floor(Math.random() * 4);
     for (let j = 0; j < rocksInCluster; j++) {
       const size = 0.6 + Math.random() * 1.4;
       const rock = MeshBuilder.CreatePolyhedron(`rock${i}_${j}`, { type: Math.floor(Math.random() * 4), size }, scene);
@@ -302,11 +394,21 @@ const enemyViews = new Map<string, EnemyView>();
 const shurikens = new ShurikenField(scene);
 
 stateCallbacks(room.state).players.onAdd((player, sessionId) => {
-  if (sessionId === localSessionId) return;
+  if (sessionId === localSessionId) {
+    stateCallbacks(player).listen("health", (value, previous) => {
+      if (value < previous && value > 0) sfx.hurt();
+    });
+    stateCallbacks(player).listen("isDead", (value) => {
+      if (value) sfx.death();
+      else sfx.respawn();
+    });
+    return;
+  }
   const view = new RemotePlayerView(scene, player.x, player.y, player.z, player.rotY, player.skin, player.isProne);
   remotePlayers.set(sessionId, view);
   stateCallbacks(player).listen("skin", (value) => view.setSkin(value));
   stateCallbacks(player).listen("isProne", (value) => view.setProne(value));
+  stateCallbacks(player).listen("isJumping", (value) => view.setJumping(value));
 });
 stateCallbacks(room.state).players.onRemove((_player, sessionId) => {
   remotePlayers.get(sessionId)?.dispose();
@@ -320,7 +422,10 @@ stateCallbacks(room.state).enemies.onAdd((enemy, enemyId) => {
   const view = new EnemyView(scene, enemy.x, enemy.y, enemy.z, enemy.rotY, `${index + 1}`, index);
   enemyViews.set(enemyId, view);
   stateCallbacks(enemy).listen("health", (value, previous) => {
-    if (value < previous) view.flashHit();
+    if (value < previous) {
+      view.flashHit();
+      sfx.hitMarker();
+    }
   });
 });
 stateCallbacks(room.state).enemies.onRemove((_enemy, enemyId) => {
@@ -329,12 +434,15 @@ stateCallbacks(room.state).enemies.onRemove((_enemy, enemyId) => {
 });
 room.onMessage(ServerEvent.KnifeStab, (payload: KnifeStabEvent) => {
   enemyViews.get(payload.enemyId)?.stabKnife();
+  sfx.swordSwing();
 });
 room.onMessage(ServerEvent.EnemyBroken, (payload: EnemyBrokenEvent) => {
   enemyViews.get(payload.enemyId)?.break(payload.x, payload.y, payload.z);
+  sfx.enemyBreak();
 });
 room.onMessage(ServerEvent.ShurikenThrown, (payload: ShurikenThrownEvent) => {
   enemyViews.get(payload.enemyId)?.throwAnimation();
+  sfx.shurikenThrow();
   shurikens.spawn(
     payload.id,
     new Vector3(payload.originX, payload.originY, payload.originZ),
@@ -343,6 +451,7 @@ room.onMessage(ServerEvent.ShurikenThrown, (payload: ShurikenThrownEvent) => {
 });
 room.onMessage(ServerEvent.ShurikenGone, (payload: ShurikenGoneEvent) => {
   shurikens.retire(payload.id, new Vector3(payload.x, payload.y, payload.z), payload.hit);
+  if (payload.hit) sfx.shurikenHit();
 });
 room.onMessage(ServerEvent.EnemyRespawned, (payload: EnemyRespawnedEvent) => {
   const enemy = room.state.enemies.get(payload.enemyId);
@@ -408,10 +517,28 @@ function updateNetworkedMovement(deltaSeconds: number): void {
     moveZ: (movementKeys.forward ? 1 : 0) - (movementKeys.back ? 1 : 0),
     yaw: camera.rotation.y,
   };
+  const previousX = reconciler.state.x;
+  const previousZ = reconciler.state.z;
+  const wasAirborne = reconciler.state.isJumping;
+  const fallSpeed = reconciler.state.velocityY;
+
   const seq = reconciler.predict(input, deltaSeconds);
+
+  // Footfalls come out of distance covered, so the shake matches the actual pace -- including
+  // the slow heavy sway of a crawl -- instead of running off a free clock.
+  const travelled = Math.hypot(reconciler.state.x - previousX, reconciler.state.z - previousZ);
+  const motion = cameraMotion.update(deltaSeconds, {
+    speed: deltaSeconds > 0 ? travelled / deltaSeconds : 0,
+    isJumping: reconciler.state.isJumping,
+    isCrawling: reconciler.state.isProne,
+    travelled,
+  });
+  if (wasAirborne && !reconciler.state.isJumping) sfx.land(fallSpeed < -9);
+
   camera.position.x = reconciler.state.x;
-  camera.position.y = reconciler.state.y;
+  camera.position.y = reconciler.state.y + motion.height;
   camera.position.z = reconciler.state.z;
+  camera.rotation.z = motion.roll;
 
   inputSendAccumulator += deltaSeconds;
   if (inputSendAccumulator >= INPUT_SEND_INTERVAL) {
@@ -433,7 +560,12 @@ function updateRemotePlayers(deltaSeconds: number): void {
 window.addEventListener("keydown", (e) => {
   if (e.code !== "Space" || isLocalPlayerDead()) return;
   e.preventDefault();
+  const before = reconciler.state;
   reconciler.state = triggerJump(reconciler.state);
+  if (reconciler.state !== before) {
+    sfx.jump();
+    cameraMotion.jumped();
+  }
   room.send(ClientMessage.Jump);
 });
 
@@ -444,8 +576,10 @@ window.addEventListener("keydown", (e) => {
 });
 
 window.addEventListener("keydown", (e) => {
-  if (e.code !== "KeyV" || isLocalPlayerDead()) return;
+  // F is the crawl key; V stays bound to it so the old habit still works.
+  if ((e.code !== "KeyF" && e.code !== "KeyV") || isLocalPlayerDead()) return;
   reconciler.state = toggleProne(reconciler.state, terrain);
+  sfx.footstep(true);
   room.send(ClientMessage.ToggleProne);
 });
 
@@ -456,7 +590,35 @@ window.addEventListener("keydown", (e) => {
 });
 
 const sniper = createDefaultSniper();
+const minigun = createDefaultMinigun();
+const sfx = new Sfx();
+const cameraMotion = new CameraMotion();
 const { root: weaponRoot, muzzle } = createSniperViewModel(scene, camera);
+const minigunView = createMinigunViewModel(scene, camera);
+minigunView.root.setEnabled(false);
+
+/** Which weapon is in hand. The server holds the authoritative copy; this mirrors it locally. */
+let activeSlot: WeaponSlotValue = WeaponSlot.Sniper;
+/** True while the left mouse button is held, so the minigun can keep firing. */
+let triggerDown = false;
+
+const activeWeaponLocal = () => (activeSlot === WeaponSlot.Minigun ? minigun : sniper);
+
+function switchWeapon(slot: WeaponSlotValue): void {
+  if (slot === activeSlot || isLocalPlayerDead()) return;
+  // Leaving the sniper while scoped would strand the zoomed FOV and the scope overlay.
+  if (sniper.isScoped) {
+    setScoped(false);
+    sniper.toggleScope();
+  }
+  activeSlot = slot;
+  weaponRoot.setEnabled(slot === WeaponSlot.Sniper);
+  minigunView.root.setEnabled(slot === WeaponSlot.Minigun);
+  sfx.weaponSwitch();
+  room.send(ClientMessage.SwitchWeapon, { weapon: slot } satisfies SwitchWeaponPayload);
+}
+
+cameraMotion.onStep(() => sfx.footstep(reconciler.state.isProne));
 const bulletTracer = new BulletTracer(scene);
 
 const weaponRestPosition = weaponRoot.position.clone();
@@ -499,12 +661,26 @@ const AIM_CONVERGENCE_DISTANCE = 1000;
  */
 function fire(): void {
   const now = performance.now();
-  if (isLocalPlayerDead() || now < invincibleUntil || !sniper.fire(now)) return;
-  recoilKick = 1;
-  const origin = muzzle.getAbsolutePosition();
+  const weapon = activeWeaponLocal();
+  if (isLocalPlayerDead() || now < invincibleUntil || !weapon.fire(now)) return;
+  const isMinigun = activeSlot === WeaponSlot.Minigun;
+  // The minigun kicks far less per round, or seventeen shots a second would shake the view apart.
+  recoilKick = isMinigun ? 0.28 : 1;
+  const origin = (isMinigun ? minigunView.muzzle : muzzle).getAbsolutePosition();
   const aimRay = camera.getForwardRay(AIM_CONVERGENCE_DISTANCE);
   const aimPoint = aimRay.origin.add(aimRay.direction.scale(AIM_CONVERGENCE_DISTANCE));
   const direction = aimPoint.subtract(origin).normalize();
+  if (isMinigun) {
+    // Scatter into a cone. The server trusts the direction we send, so the spread has to be
+    // applied here -- it is the weapon's defining drawback, not a visual effect.
+    const spread = minigun.spreadRadians;
+    direction.x += (Math.random() * 2 - 1) * spread;
+    direction.y += (Math.random() * 2 - 1) * spread;
+    direction.z += (Math.random() * 2 - 1) * spread;
+    direction.normalize();
+  }
+  if (isMinigun) sfx.minigunShot();
+  else sfx.sniperShot();
   room.send(ClientMessage.Fire, {
     originX: origin.x,
     originY: origin.y,
@@ -517,9 +693,15 @@ function fire(): void {
 
 window.addEventListener("keydown", (e) => {
   if (e.code !== "KeyR" || isLocalPlayerDead()) return;
-  if (sniper.startReload(performance.now())) {
+  if (activeWeaponLocal().startReload(performance.now())) {
+    sfx.reload();
     room.send(ClientMessage.Reload);
   }
+});
+
+window.addEventListener("keydown", (e) => {
+  if (e.code === "Digit1") switchWeapon(WeaponSlot.Sniper);
+  else if (e.code === "Digit2") switchWeapon(WeaponSlot.Minigun);
 });
 
 // --- Cosmetics menu -------------------------------------------------------------------------
@@ -590,6 +772,7 @@ selectSkin(selectedSkin);
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
 canvas.addEventListener("click", () => {
+  sfx.unlock();
   if (!document.pointerLockElement) {
     canvas.requestPointerLock();
   }
@@ -598,10 +781,19 @@ canvas.addEventListener("click", () => {
 canvas.addEventListener("pointerdown", (e) => {
   if (document.pointerLockElement !== canvas) return;
   if (e.button === 0) {
+    triggerDown = true;
     fire();
-  } else if (e.button === 2) {
+  } else if (e.button === 2 && activeSlot === WeaponSlot.Sniper) {
     setScoped(sniper.toggleScope());
   }
+});
+
+window.addEventListener("pointerup", (e) => {
+  if (e.button === 0) triggerDown = false;
+});
+// Losing the pointer lock (alt-tab, Escape) must not leave the trigger stuck down.
+window.addEventListener("blur", () => {
+  triggerDown = false;
 });
 
 document.addEventListener("pointerlockchange", () => {
@@ -634,10 +826,10 @@ function updateHud(): void {
 
   sniper.tick(performance.now());
   if (sniper.isReloading) {
-    ammoCounter.textContent = `Reloading... ${(sniper.reloadRemainingMs(performance.now()) / 1000).toFixed(1)}s`;
+    ammoCounter.textContent = `Reloading... ${(activeWeaponLocal().reloadRemainingMs(performance.now()) / 1000).toFixed(1)}s`;
     ammoCounter.classList.add("reloading");
   } else {
-    ammoCounter.textContent = `${localPlayer.ammo} / ${sniper.magazineSize}`;
+    ammoCounter.textContent = `${activeWeaponLocal().name.toUpperCase()}  ${localPlayer.ammo} / ${activeWeaponLocal().magazineSize}`;
     ammoCounter.classList.remove("reloading");
   }
 
@@ -740,6 +932,9 @@ engine.runRenderLoop(() => {
   updateHud();
   updateRadar();
   applyRecoil(deltaSeconds);
+  // Held trigger: the weapon's own fire rate decides how many of these calls actually shoot.
+  if (triggerDown && activeSlot === WeaponSlot.Minigun) fire();
+  minigunView.update(deltaSeconds, triggerDown && activeSlot === WeaponSlot.Minigun);
   bulletTracer.update(deltaSeconds);
   scene.render();
 });

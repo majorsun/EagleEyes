@@ -30,6 +30,10 @@ const WALK_SPEED_FLOOR = 0.25;
 const POSE_RELAX_RATE = 8;
 const THROW_DURATION = 0.42;
 const SWING_DURATION = 0.34;
+/** Seconds for a killed ninja to fall flat. */
+const DEATH_FALL_DURATION = 0.7;
+/** How long the body lies there before it is cleared. */
+const DEATH_LINGER = 1.9;
 
 type ActionKind = "throw" | "swing";
 
@@ -61,6 +65,7 @@ export class EnemyView {
   private baseY: number;
   private action: ActionKind | null = null;
   private actionElapsed = 0;
+  private dyingElapsed: number | null = null;
   private flashResetTimer: ReturnType<typeof setTimeout> | null = null;
 
   private targetX: number;
@@ -352,6 +357,11 @@ export class EnemyView {
       this.marker.scaling.set(scale, scale, scale);
     }
 
+    if (this.dyingElapsed !== null) {
+      this.updateDeath(deltaSeconds);
+      return;
+    }
+
     const travelled = Math.hypot(this.root.position.x - previousX, this.root.position.z - previousZ);
     this.animate(travelled, deltaSeconds);
   }
@@ -387,6 +397,30 @@ export class EnemyView {
     this.rightShoulder.rotation.x += (armSwing - this.rightShoulder.rotation.x) * relax;
     this.rightShoulder.rotation.z += (0 - this.rightShoulder.rotation.z) * relax;
     this.blade.rotation.x += (-0.5 - this.blade.rotation.x) * relax;
+  }
+
+  /**
+   * A killed ninja pitches forward onto its face and settles, instead of blinking out of
+   * existence. Rotation eases out so the fall decelerates as the body meets the ground.
+   */
+  private updateDeath(deltaSeconds: number): void {
+    if (this.dyingElapsed === null) return;
+    this.dyingElapsed += deltaSeconds;
+
+    const fall = Math.min(1, this.dyingElapsed / DEATH_FALL_DURATION);
+    const eased = 1 - (1 - fall) * (1 - fall);
+    this.root.rotation.x = eased * (Math.PI / 2);
+    // Pivoting about the body's centre would bury the head, so drop it to lie on the surface.
+    this.root.position.y = this.baseY - eased * 0.62;
+    // Limbs flop toward neutral as it goes limp.
+    const limp = Math.min(1, deltaSeconds * 5);
+    for (const hip of this.hips) hip.rotation.x += (0.25 - hip.rotation.x) * limp;
+    for (const shoulder of this.shoulders) shoulder.rotation.x += (0.6 - shoulder.rotation.x) * limp;
+
+    if (this.dyingElapsed > DEATH_LINGER) {
+      this.root.setEnabled(false);
+      this.marker.setEnabled(false);
+    }
   }
 
   /** Poses the right arm through whichever attack is currently playing. */
@@ -441,13 +475,19 @@ export class EnemyView {
   }
 
   break(x: number, y: number, z: number): void {
-    this.root.setEnabled(false);
+    this.dyingElapsed = 0;
+    this.endAction();
     this.marker.setEnabled(false);
-    spawnDebris(this.scene, new Vector3(x, y, z), this.debrisMat, "enemyDebris");
+    this.baseY = y;
+    this.root.position.set(x, y, z);
+    // A puff of dust where the body hits, rather than the whole ninja bursting into chunks.
+    spawnDebris(this.scene, new Vector3(x, y - 0.5, z), this.debrisMat, "enemyDebris", 5);
   }
 
   respawn(x: number, y: number, z: number): void {
     this.clothMat.diffuseColor = this.intactColor.clone();
+    this.dyingElapsed = null;
+    this.root.rotation.x = 0;
     this.baseY = y;
     this.root.position.set(x, y, z);
     this.marker.position.set(x, y + MARKER_Y_OFFSET, z);

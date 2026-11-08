@@ -24,8 +24,10 @@ import {
 import { spawnDebris } from "./debris";
 
 const LERP_RATE = 12;
-const CRUMBLE_DURATION = 0.4;
-const CRUMBLE_SINK_SPEED = 1.5;
+/** How long a body lies where it fell before it is cleared away. */
+const CORPSE_LINGER = 2.2;
+/** Once cleared, it sinks out of sight rather than blinking out. */
+const CORPSE_SINK_SPEED = 0.9;
 
 // Rigged operator model (client/public/models/operator.glb): Quaternius "Soldier Male" from the
 // Ultimate Animated Characters pack, CC0, no attribution required. Loaded once per scene into an
@@ -127,6 +129,10 @@ export class RemotePlayerView {
   private isProneState: boolean;
   private idleAnimation: AnimationGroup | null = null;
   private runAnimation: AnimationGroup | null = null;
+  private walkAnimation: AnimationGroup | null = null;
+  private jumpAnimation: AnimationGroup | null = null;
+  private deathAnimation: AnimationGroup | null = null;
+  private isJumpingState = false;
   private activeAnimation: AnimationGroup | null = null;
   private isDisposed = false;
   private skinIndex: number;
@@ -200,6 +206,9 @@ export class RemotePlayerView {
       group.stop();
       if (group.name.includes("Idle")) this.idleAnimation ??= group;
       if (group.name.includes("Run")) this.runAnimation ??= group;
+      if (group.name.includes("Walk")) this.walkAnimation ??= group;
+      if (group.name.includes("Jump")) this.jumpAnimation ??= group;
+      if (group.name.includes("Death")) this.deathAnimation ??= group;
     }
     this.playAnimation(this.idleAnimation);
     this.attachWeapon(model, scale);
@@ -304,11 +313,16 @@ export class RemotePlayerView {
     this.weapon = weapon;
   }
 
-  private playAnimation(group: AnimationGroup | null): void {
+  private playAnimation(group: AnimationGroup | null, loop = true): void {
     if (!group || group === this.activeAnimation) return;
     this.activeAnimation?.stop();
-    group.start(true);
+    group.start(loop);
     this.activeAnimation = group;
+  }
+
+  /** Mirrors the server's isJumping flag so airborne players are visibly airborne. */
+  setJumping(isJumping: boolean): void {
+    this.isJumpingState = isJumping;
   }
 
   /**
@@ -408,16 +422,29 @@ export class RemotePlayerView {
     }
   }
 
+  /**
+   * Death plays the model's own collapse and leaves the body lying where it fell, rather than
+   * shrinking it into the sand. A player killed mid-crawl is stood back up first, since the clip
+   * is authored from an upright pose.
+   */
   private crumble(): void {
     this.isDeadState = true;
     this.crumbleElapsed = 0;
-    this.activeAnimation?.stop();
-    this.activeAnimation = null;
-    spawnDebris(this.scene, this.root.position.clone(), this.debrisMat, "playerDebris", 10);
+    this.isProneState = false;
+    this.applyStance();
+    if (this.deathAnimation) {
+      this.playAnimation(this.deathAnimation, false);
+    } else {
+      this.activeAnimation?.stop();
+      this.activeAnimation = null;
+    }
+    spawnDebris(this.scene, this.root.position.clone(), this.debrisMat, "playerDebris", 4);
   }
 
   private reset(x: number, y: number, z: number, rotY: number): void {
     this.isDeadState = false;
+    this.deathAnimation?.stop();
+    this.activeAnimation = null;
     this.root.scaling.set(1, 1, 1);
     this.root.position.set(x, y, z);
     this.root.rotation.y = rotY;
@@ -428,13 +455,13 @@ export class RemotePlayerView {
 
   update(deltaSeconds: number): void {
     if (this.isDeadState) {
-      // Shrink and sink into the ground over CRUMBLE_DURATION, then hide -- the spawned
-      // debris chunks (from crumble()) carry the rest of the visual weight after that.
+      // The body holds its final pose where it dropped, then sinks away once the kill has had
+      // time to read. The server's respawn is what actually brings it back.
       this.crumbleElapsed += deltaSeconds;
-      const scale = Math.max(0, 1 - this.crumbleElapsed / CRUMBLE_DURATION);
-      this.root.scaling.set(scale, scale, scale);
-      this.root.position.y -= deltaSeconds * CRUMBLE_SINK_SPEED;
-      if (scale <= 0) this.root.setEnabled(false);
+      if (this.crumbleElapsed > CORPSE_LINGER) {
+        this.root.position.y -= deltaSeconds * CORPSE_SINK_SPEED;
+        if (this.crumbleElapsed > CORPSE_LINGER + 2) this.root.setEnabled(false);
+      }
       return;
     }
 
@@ -451,7 +478,16 @@ export class RemotePlayerView {
     // so the legs match what the eye actually sees after interpolation.
     if (deltaSeconds > 0) {
       const speed = Math.hypot(this.root.position.x - previousX, this.root.position.z - previousZ) / deltaSeconds;
-      this.playAnimation(speed > RUN_ANIMATION_SPEED ? this.runAnimation : this.idleAnimation);
+      const moving = speed > RUN_ANIMATION_SPEED;
+      if (this.isJumpingState) {
+        this.playAnimation(this.jumpAnimation ?? this.idleAnimation);
+      } else if (this.isProneState) {
+        // No crawl clip ships with the model, so a crawling player gets the walk cycle while
+        // lying down -- the limbs move, which is what sells it at this size.
+        this.playAnimation(moving ? this.walkAnimation ?? this.runAnimation : this.idleAnimation);
+      } else {
+        this.playAnimation(moving ? this.runAnimation : this.idleAnimation);
+      }
     }
   }
 

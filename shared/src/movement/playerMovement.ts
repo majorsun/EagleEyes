@@ -85,7 +85,17 @@ export function groundSurfaceHeightAt(x: number, z: number, terrain: TerrainData
   if (isOverMoat(z)) return MOAT_FLOOR_Y;
   const hill = findHillUnderPlayer(x, z, terrain.hills);
   if (hill) return hillSurfaceY(hill, x, z);
-  return 0;
+
+  // Mesa tops are flat, so the surface is simply the tallest shelf covering this spot.
+  let surface = 0;
+  for (const mesa of terrain.mesas) {
+    const dx = x - mesa.x;
+    const dz = z - mesa.z;
+    if (dx * dx + dz * dz <= mesa.radius * mesa.radius && mesa.height > surface) {
+      surface = mesa.height;
+    }
+  }
+  return surface;
 }
 
 export function findNearestLedge(x: number, z: number, ledges: LedgePoint[]): LedgePoint | null {
