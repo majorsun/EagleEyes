@@ -10,6 +10,8 @@ import {
   SLIDE_DISTANCE,
   SLIDE_SPEED,
   PRONE_EYE_DROP,
+  CRAWL_SPEED,
+  CRAWL_EYE_HEIGHT,
   PRONE_LEDGE_EYE_OFFSET,
   PRONE_LEDGE_SNAP_RANGE,
   HILL_SPEED_MULTIPLIER,
@@ -160,14 +162,15 @@ export function stepMovement(
   dt: number,
 ): PlayerPhysicsState {
   const hasMovementInput = input.moveX !== 0 || input.moveZ !== 0;
-  let next = hasMovementInput ? unprone(state) : state;
+  // Moving no longer stands you up: prone is a crawl now, and you leave it by toggling.
+  const next = state;
 
   let x = next.x;
   let z = next.z;
 
-  if (!next.isProne) {
+  {
     const onHill = findHillUnderPlayer(x, z, terrain.hills) !== null;
-    const speed = PLAYER_SPEED * (onHill ? HILL_SPEED_MULTIPLIER : 1);
+    const speed = next.isProne ? CRAWL_SPEED : PLAYER_SPEED * (onHill ? HILL_SPEED_MULTIPLIER : 1);
 
     const forwardX = Math.sin(input.yaw);
     const forwardZ = Math.cos(input.yaw);
@@ -211,6 +214,11 @@ export function stepMovement(
     }
   } else if (!next.isProne) {
     y = groundSurfaceHeightAt(x, z, terrain) + GROUND_EYE_HEIGHT;
+    jumpCount = 0;
+  } else if (hasMovementInput) {
+    // A crawling player follows the ground like anyone else. Holding still while prone leaves y
+    // alone, so the ledge toggleProne snapped you onto is not immediately undone.
+    y = groundSurfaceHeightAt(x, z, terrain) + CRAWL_EYE_HEIGHT;
     jumpCount = 0;
   }
 

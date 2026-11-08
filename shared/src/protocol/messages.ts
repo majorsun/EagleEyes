@@ -7,6 +7,7 @@ export const ClientMessage = {
   Fire: "fire",
   Reload: "reload",
   SetSkin: "setSkin",
+  SwitchWeapon: "switchWeapon",
 } as const;
 
 export interface InputPayload {
@@ -14,6 +15,11 @@ export interface InputPayload {
   moveZ: number;
   yaw: number;
   seq: number;
+}
+
+export interface SwitchWeaponPayload {
+  /** A WeaponSlot value; the server clamps it. */
+  weapon: number;
 }
 
 export interface SetSkinPayload {

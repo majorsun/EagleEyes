@@ -26,8 +26,11 @@ import {
   type EnemyAIConfig,
   raycastClosestHit,
   type HitTarget,
-  createDefaultSniper,
-  Sniper,
+  createLoadout,
+  activeWeapon,
+  clampWeaponSlot,
+  type Loadout,
+  type SwitchWeaponPayload,
   createShuriken,
   stepShuriken,
   type ShurikenState,
@@ -59,7 +62,7 @@ const DEFAULT_ENEMY_CONFIG: EnemyAIConfig = {
   attackDamage: 10,
   attackIntervalMs: 700,
   throwRange: 22,
-  throwIntervalMs: 2200,
+  throwIntervalMs: 1100,
 };
 
 const DEFAULT_INPUT: InputPayload = { moveX: 0, moveZ: 0, yaw: 0, seq: 0 };
@@ -77,7 +80,7 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
   private readonly playerRespawnAt = new Map<string, number>();
   private readonly playerInvincibleUntil = new Map<string, number>();
   private readonly enemies = new Map<string, EnemyAIState>();
-  private readonly snipers = new Map<string, Sniper>();
+  private readonly loadouts = new Map<string, Loadout>();
 
   onCreate(): void {
     this.setState(new EagleEyesRoomState());
@@ -124,11 +127,21 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
       if (!player) return;
       player.skin = clampPlayerSkin(message?.skin);
     });
+    this.onMessage(ClientMessage.SwitchWeapon, (client, message: SwitchWeaponPayload) => {
+      const loadout = this.loadouts.get(client.sessionId);
+      const player = this.state.players.get(client.sessionId);
+      if (!loadout || !player || player.isDead) return;
+      loadout.active = clampWeaponSlot(message?.weapon);
+      const weapon = activeWeapon(loadout);
+      weapon.tick(Date.now());
+      player.weapon = loadout.active;
+      player.ammo = weapon.currentAmmo;
+    });
     this.onMessage(ClientMessage.Reload, (client) => {
       const player = this.state.players.get(client.sessionId);
-      const sniper = this.snipers.get(client.sessionId);
-      if (!player || !sniper || player.isDead) return;
-      sniper.startReload(Date.now());
+      const loadout = this.loadouts.get(client.sessionId);
+      if (!player || !loadout || player.isDead) return;
+      activeWeapon(loadout).startReload(Date.now());
     });
 
     this.setFixedTimestep((ctx) => this.fixedTick(ctx.dt), 60);
@@ -145,7 +158,7 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
     this.state.players.set(client.sessionId, player);
     this.physics.set(client.sessionId, createSpawnPhysicsState());
     this.latestInputs.set(client.sessionId, DEFAULT_INPUT);
-    this.snipers.set(client.sessionId, createDefaultSniper());
+    this.loadouts.set(client.sessionId, createLoadout());
     // A joining player lands on the spawn platform exactly like a respawning one, and the enemies
     // camp it -- without the same grace window they are knifed to death within a couple of
     // seconds of the page loading, before they can even look around.
@@ -159,7 +172,7 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
     this.physics.delete(client.sessionId);
     this.playerRespawnAt.delete(client.sessionId);
     this.playerInvincibleUntil.delete(client.sessionId);
-    this.snipers.delete(client.sessionId);
+    this.loadouts.delete(client.sessionId);
     console.log(`${client.sessionId} left (${this.state.players.size} players)`);
   }
 
@@ -194,6 +207,7 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
       player.z = next.z;
       player.rotY = input.yaw;
       player.isProne = next.isProne;
+      player.isJumping = next.isJumping;
       player.lastProcessedSeq = input.seq;
 
       if (player.health < PLAYER_MAX_HEALTH) {
@@ -202,10 +216,12 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
 
       // Resolves a completed reload even if the player hasn't fired/reloaded again since, so the
       // ammo count other clients see (and this player's own HUD) doesn't lag behind reality.
-      const sniper = this.snipers.get(sessionId);
-      if (sniper) {
-        sniper.tick(now);
-        player.ammo = sniper.currentAmmo;
+      const loadout = this.loadouts.get(sessionId);
+      if (loadout) {
+        const weapon = activeWeapon(loadout);
+        weapon.tick(now);
+        player.ammo = weapon.currentAmmo;
+        player.weapon = loadout.active;
       }
     }
 
@@ -311,7 +327,8 @@ export class EagleEyesRoom extends Room<{ state: EagleEyesRoomState }> {
 
   private handleFire(sessionId: string, payload: FirePayload): void {
     const player = this.state.players.get(sessionId);
-    const sniper = this.snipers.get(sessionId);
+    const loadout = this.loadouts.get(sessionId);
+    const sniper = loadout ? activeWeapon(loadout) : undefined;
     if (!player || !sniper || player.isDead) return;
     if (this.isInvincible(sessionId, Date.now())) return;
 

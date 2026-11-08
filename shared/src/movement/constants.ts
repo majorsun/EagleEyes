@@ -26,6 +26,10 @@ export const SLIDE_DISTANCE = 0.5;
 export const SLIDE_SPEED = 10;
 
 export const PRONE_EYE_DROP = 1.2;
+/** Eye height while crawling: low enough to use cover, and the height the body is drawn at. */
+export const CRAWL_EYE_HEIGHT = GROUND_EYE_HEIGHT - PRONE_EYE_DROP;
+/** Crawling trades almost all your speed for that low profile. */
+export const CRAWL_SPEED = 1.7;
 export const PRONE_LEDGE_EYE_OFFSET = 0.4;
 export const PRONE_LEDGE_SNAP_RANGE = 40;
 
